@@ -177,6 +177,54 @@ count_hook (
     return 0;
 }
 
+#ifdef GRUB_MACHINE_EFI
+/* Find the optimal number of pages for the memory map. Is it better to
+   move this code to efi/mm.c?  */
+static grub_efi_uintn_t
+find_efi_mmap_size (void)
+{
+  static grub_efi_uintn_t mmap_size = 0;
+
+  if (mmap_size != 0)
+    return mmap_size;
+
+  mmap_size = (1 << 12);
+  while (1)
+    {
+      int ret;
+      grub_efi_memory_descriptor_t *mmap;
+      grub_efi_uintn_t desc_size;
+      grub_efi_uintn_t cur_mmap_size = mmap_size;
+
+      mmap = grub_malloc (cur_mmap_size);
+      if (! mmap)
+	return 0;
+
+      ret = grub_efi_get_memory_map (&cur_mmap_size, mmap, 0, &desc_size, 0);
+      grub_free (mmap);
+
+      if (ret < 0)
+	{
+	  grub_error (GRUB_ERR_IO, "cannot get memory map");
+	  return 0;
+	}
+      else if (ret > 0)
+	break;
+
+      if (mmap_size < cur_mmap_size)
+	mmap_size = cur_mmap_size;
+      mmap_size += (1 << 12);
+    }
+
+  /* Increase the size a bit for safety, because GRUB allocates more on
+     later, and EFI itself may allocate more.  */
+  mmap_size += (3 << 12);
+
+  mmap_size = page_align (mmap_size);
+  return mmap_size;
+}
+
+#endif
 
 /* Find the optimal number of pages for the memory map. */
 static grub_size_t
@@ -1169,7 +1217,7 @@ grub_cmd_android (grub_command_t cmd __attribute__ ((unused)), int argc, char *a
         src.read = &disk_read;
         src.free = &disk_free;
         src.size = grub_disk_get_size (disk) * GRUB_DISK_SECTOR_SIZE;
-        grub_dprintf ("android", "device size = %d\n",src.size);
+        grub_dprintf ("android", "device size = %zd\n",src.size);
         src.priv = disk;
     }
     else
@@ -1181,7 +1229,7 @@ grub_cmd_android (grub_command_t cmd __attribute__ ((unused)), int argc, char *a
         src.read = &file_read;
         src.free = &file_free;
         src.size = grub_file_size (file);
-        grub_dprintf ("android", "file size = %d\n",src.size);
+        grub_dprintf ("android", "file size = %zd\n",src.size);
         src.priv = file;
     }
 
